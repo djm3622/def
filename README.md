@@ -19,3 +19,4 @@ Modify a UNet model to take in both conditional time embedding, standard time/no
 1. https://arxiv.org/pdf/2101.12072
 2. https://arxiv.org/pdf/2112.10752
 3. Survey: https://arxiv.org/pdf/2209.00796v13
+4. https://arxiv.org/pdf/2102.09672
