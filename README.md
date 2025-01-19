@@ -1,4 +1,4 @@
-# Time Invariant Operator Guided Diffusion
+# Diffusion-augmented Ensemble Forecasting
 
 Modify a UNet model to take in both conditional time embedding, standard time/noise embedding, and concat my conditional state along the channel dimension with the Y during training/sampling.
 
