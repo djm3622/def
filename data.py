@@ -157,3 +157,7 @@ def train_test_split(seq_len_cache):
         
     return train, test
 
+
+# TODO
+def get_trajectories():
+    pass

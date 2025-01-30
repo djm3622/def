@@ -42,3 +42,17 @@ def initialize_unet(model):
     
     model.apply(_init_weights)
     return model
+
+class OperatorLoss(nn.Module):
+    def __init__(self, a1, a2):
+        super().__init__()
+        
+        self.mse = lambda x, y: torch.mean(torch.mean(torch.linalg.norm(x - y, dim=(2, 3)), dim=1))
+        self.mae = lambda x, y: torch.mean(torch.mean(torch.linalg.norm(x - y, dim=(2, 3), ord=1), dim=1))
+        self.a1 = a1
+        self.a2 = a2
+        
+    def forward(self, x_predicted, y):
+        # Prediction/L2
+        pred = self.mse(x_predicted, y)                       
+        return self.a1 * pred + self.a2 * pred

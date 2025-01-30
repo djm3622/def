@@ -1,21 +1,10 @@
-# Time Invariant Operator Guided Diffusion
-
-Modify a UNet model to take in both conditional time embedding, standard time/noise embedding, and concat my conditional state along the channel dimension with the Y during training/sampling.
+# Diffusion-augmented Ensemble Forecasting
 
 # TODO
-1. Train an unconditional model to see quality results
-    a. Determine the best way to train DDPM (current best techniques)
-    b. Train
-2. start working on model (concat conditional state, conditional time embeddings, time-embeddigs/noise-embeddings)
-3. Figure out training process (do I consider CFG?, do I do LDM?)
+1. (Data + Dataset) to get trajectories.
+2. Seed + space these trajectories (in Tune).
+3. Setup tuning function to test (solvers + guidance) -> determine where the strength and weakness of this method lies.
+4. Setup SV-based perturbations.
+5. Compare the two.
 
-# READING
-1. Survey paper notes
-    a. DDPM + DDIM
-    b. Noise schedule optimization
-    c. Variance learning
 
-# References
-1. https://arxiv.org/pdf/2101.12072
-2. https://arxiv.org/pdf/2112.10752
-3. Survey: https://arxiv.org/pdf/2209.00796v13

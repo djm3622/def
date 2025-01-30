@@ -4,8 +4,35 @@ from tqdm.notebook import tqdm
 from wandb_helper import log_losses
 
 
-def accelerator_train(accelerator, train, model, epochs, criterion, save_path, loss_type,
-                     train_log, optimizer, scheduler, t_timesteps, config=None, loading_bar=False):
+@torch.no_grad()
+def sampling(model, samples, t_timesteps, beta, alpha, alpha_bar, accelerator, size):
+    c, w, h = 1, size, size
+
+    # intial random noise like normal data
+    imgs = torch.randn((samples, c, w, h), device=accelerator.device)
+
+    for step in range(t_timesteps-1, -1, -1):
+        # skip adding noise if timetep 0 (final step -> sample)
+        error = torch.randn_like(imgs) if step > 1 else torch.zeros_like(imgs)
+
+        # timesteps needed for the forward pass
+        timesteps = torch.ones(samples, dtype=torch.int, device=accelerator.device) * step
+
+        # change shape (batch_size) -> (batch_size, 1, 1, 1) to align w imgs
+        beta_t = beta[timesteps].view(samples, 1, 1, 1)
+        alpha_t = alpha[timesteps].view(samples, 1, 1, 1)
+        alpha_bar_t = alpha_bar[timesteps].view(samples, 1, 1, 1)
+
+        # formula
+        mu = 1 / torch.sqrt(alpha_t) * (imgs - ((beta_t) / torch.sqrt(1 - alpha_bar_t)) * model(imgs, timesteps - 1, return_dict=False)[0])
+        sigma = torch.sqrt(beta_t)
+        imgs = mu + sigma * error
+
+    return imgs
+
+
+def accelerator_train(accelerator, train, model, epochs, criterion, save_path, loss_type, train_log,
+                      optimizer, scheduler, sample_delay, t_timesteps, size, config=None, loading_bar=False):
     
     # Cosine variance schedule as described in "Improved Denoising Diffusion Probabilistic Models"
     def cosine_beta_schedule(timesteps):
@@ -15,17 +42,12 @@ def accelerator_train(accelerator, train, model, epochs, criterion, save_path, l
         alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
         return torch.clip(betas, 0.0001, 0.9999)
-
-    beta = cosine_beta_schedule(t_timesteps)
+    
+    beta = torch.linspace(1e-4, 0.02, t_timesteps).to(accelerator.device)
     alpha = 1.0 - beta
     alpha_bar = torch.cumprod(alpha, dim=0).to(accelerator.device)
     
     # TODO : finish the learned variance option
-    
-    alpha_bar_prev = F.pad(alpha_bar[:-1], (1, 0), value=1.0)
-    sqrt_alpha_bar= torch.sqrt(alpha_bar)
-    sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
-    posterior_variance = beta * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
     
     def step(train_batch, model, criterion):
         clean_images, noisy_images, rand_timesteps = train_batch
@@ -35,34 +57,12 @@ def accelerator_train(accelerator, train, model, epochs, criterion, save_path, l
         
         if loss_type == "simple":
             noise_pred = model(next_state, rand_timesteps.squeeze(-1), return_dict=False)[0]
-        elif loss_type == "hybrid":
-            model_output = model(next_state, rand_timesteps.squeeze(-1), return_dict=False)[0]
-            noise_pred, var_pred = torch.chunk(model_output, 2, dim=1)
         
         # Simple loss (L_simple)
         simple_loss = criterion(noise_pred, noisy_images)
 
         if loss_type == "simple":
             return simple_loss
-        
-        elif loss_type == "hybrid":
-            # VLB loss (L_vlb)
-            # Calculate posterior mean and variance
-            posterior_mean = (
-                (sqrt_alpha_bar[t].reshape(-1, 1, 1, 1) * beta[t].reshape(-1, 1, 1, 1) * clean_images) +
-                ((1 - sqrt_alpha_bar[t].reshape(-1, 1, 1, 1)) * sqrt_one_minus_alpha_bar[t].reshape(-1, 1, 1, 1) * var_pred)
-            ) / (1 - sqrt_alpha_bar[t].reshape(-1, 1, 1, 1))
-            
-            posterior_variance = posterior_variance[t].reshape(-1, 1, 1, 1)
-            
-            # Calculate KL divergence
-            vlb_loss = 0.5 * (-1.0 - torch.log(var_pred) + var_pred / posterior_variance + 
-                            (posterior_mean - var_pred)**2 / posterior_variance)
-            vlb_loss = vlb_loss.mean()
-            
-            # Combine losses with lambda = 0.001 as mentioned in the paper
-            return simple_loss + 0.001 * vlb_loss
-        
     
     model.train()
     for epoch in range(epochs):
@@ -78,9 +78,10 @@ def accelerator_train(accelerator, train, model, epochs, criterion, save_path, l
                 loss = step(train_batch, model, criterion)
                 accelerator.backward(loss)
                 optimizer.step()
+                scheduler.step()
                 optimizer.zero_grad()
                 train_loss += loss.item()
-            
+                
             if loading_bar:
                 loader.set_postfix(train_loss=loss.item())
                                             
@@ -91,11 +92,18 @@ def accelerator_train(accelerator, train, model, epochs, criterion, save_path, l
         accelerator.print(f'Epoch {epoch+1}/{epochs}, Train Loss: {gathered_train_loss}')
         
         if accelerator.is_main_process:
+            img = None
+            
+            if epoch % sample_delay == 0:
+                img = sampling(model, 1, t_timesteps, beta, alpha, alpha_bar, accelerator, size)[0][0].cpu().numpy()
+            
             log_losses(
                 train_loss=gathered_train_loss,
                 valid_loss=None,
-                step=epoch
+                step=epoch,
+                img=img
             )
             
-            scheduler.step()
             accelerator.save_model(model, save_path+'train')
+            
+

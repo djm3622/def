@@ -4,6 +4,7 @@ import torch
 from typing import Optional
 from pathlib import Path
 import yaml
+import numpy as np
 
 def _convert_config_to_dict(obj: object) -> dict:
     """
@@ -69,15 +70,11 @@ def log_losses(
     valid_loss: float,
     step: Optional[int] = None,
     epoch: Optional[int] = None,
+    samples: Optional[np.ndarray] = None,
+    conditions: Optional[np.ndarray] = None
 ) -> None:
     """
-    Log training and validation losses to WandB.
-    
-    Args:
-        train_loss: Training loss value
-        valid_loss: Validation loss value
-        step: Current training step (optional)
-        epoch: Current epoch number (optional)
+    Log training and validation losses to WandB along with separate batches of samples and conditions.
     """
     log_dict = {
         'train_loss': train_loss,
@@ -89,6 +86,21 @@ def log_losses(
         log_dict['step'] = step
     if epoch is not None:
         log_dict['epoch'] = epoch
+        
+    # Log samples and conditions if provided
+    if samples is not None and conditions is not None:
+        # Create separate lists for samples and conditions
+        sample_list = [
+            wandb.Image(sample, caption=f"Sample {idx} at epoch {epoch}")
+            for idx, sample in enumerate(samples)
+        ]
+        condition_list = [
+            wandb.Image(condition, caption=f"Condition {idx} at epoch {epoch}")
+            for idx, condition in enumerate(conditions)
+        ]
+        
+        log_dict['generated_samples'] = sample_list
+        log_dict['conditions'] = condition_list
     
     wandb.log(log_dict)
     

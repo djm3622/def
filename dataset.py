@@ -9,15 +9,31 @@ import os
 import torch.nn.functional as F
 
 
-def main(x_train_data, batch_size, t_timesteps, tworkers=32, vworkers=32, aug=True):
-    train_dataset = collidingBubbles(x_train_data, load_instances, preprocess_single, t_timesteps, channel_select=[3])
+def main(x_train_data, x_valid_data, batch_size, t_timesteps, upsample_size, tworkers=32, vworkers=6, aug=True):
+    train_dataset = collidingBubbles(x_train_data, load_instances, preprocess_single, t_timesteps, upsample_size, aug, channel_select=[3])
+    valid_dataset = collidingBubbles(x_valid_data, load_instances, preprocess_single, t_timesteps, upsample_size, aug, channel_select=[3])
     
     train_dl = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, 
         num_workers=tworkers, drop_last=True, pin_memory=True
     )
+    valid_dl = DataLoader(
+        valid_dataset, batch_size=batch_size, shuffle=True, 
+        num_workers=vworkers, drop_last=True, pin_memory=True
+    )
     
-    return train_dl
+    return train_dl, valid_dl
+
+def main_operator(x_train_data, y_train_data, x_valid_data, y_valid_data, batch_size, upsample_size, tworkers=32, vworkers=32, aug=True):
+    train_dataset = OperatorDset(x_train_data, y_train_data, load_instances, preprocess, upsample_size, channel_select=[3])
+    valid_dataset = OperatorDset(x_valid_data, y_valid_data, load_instances, preprocess, upsample_size, channel_select=[3])
+    
+    train_dl = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, 
+                      num_workers=tworkers, drop_last=True, pin_memory=True)
+    valid_dl = DataLoader(valid_dataset, batch_size=batch_size, shuffle=True, 
+                      num_workers=vworkers, drop_last=True, pin_memory=True)
+    
+    return train_dl, valid_dl
 
 
 def main_time_embedding(train_set, valid_set, batch_size, tworkers=32, vworkers=32, aug=True):
@@ -31,6 +47,36 @@ def main_time_embedding(train_set, valid_set, batch_size, tworkers=32, vworkers=
     
     return train_dl, valid_dl    
 
+
+class OperatorDset(Dataset):
+    def __init__(self, x, y, loading_func, preprocess_func, upsample_size, data_aug=None, channel_select=None):
+        self.x, self.y = x, y
+        self.loading_func = loading_func
+        self.preprocess_func = preprocess_func
+        self.channel_select = channel_select
+        self.data_aug = data_aug
+        self.upsample_size = upsample_size
+
+    def __len__(self):
+        return self.x.shape[0]
+
+    def __getitem__(self, idx):
+        x_instance, y_instance = self.x[idx], self.y[idx]
+                
+        inpt =  self.loading_func(
+            x_instance, seq_len=len(x_instance), 
+            channel_select=self.channel_select, 
+            upsample_size=self.upsample_size
+        ) 
+        target = self.loading_func(
+            y_instance, seq_len=len(y_instance), 
+            channel_select=self.channel_select, 
+            upsample_size=self.upsample_size
+        )
+        inpt, target = self.preprocess_func(inpt, target)
+        
+        return inpt, target, torch.ones(1)
+    
 
 class AddGaussianNoise(object):
     def __init__(self, mean=0.0, std_range=(0.0, 0.1)):
@@ -168,12 +214,17 @@ def preprocess_single(input_tensor):
     return standard_input
 
 class collidingBubbles(Dataset):
-    def __init__(self, x, loading_func, preprocess_func, t_timesteps, channel_select=None):
+    def __init__(self, x, loading_func, preprocess_func, t_timesteps, upsample_size, aug, channel_select=None):
         self.x = x
         self.loading_func = loading_func
         self.preprocess_func = preprocess_func
         self.channel_select = channel_select
         self.t_timesteps = t_timesteps
+        self.upsample_size = upsample_size
+        self.aug = aug
+        
+        if aug:
+            self.flip = v2.RandomHorizontalFlip(p=0.5)
         
     def __len__(self):
         return self.x.shape[0]
@@ -181,7 +232,7 @@ class collidingBubbles(Dataset):
     def __getitem__(self, idx):
         x_instance = self.x[idx]
                 
-        inpt = self.loading_func(x_instance, seq_len=1, channel_select=self.channel_select) 
+        inpt = self.loading_func(x_instance, seq_len=1, channel_select=self.channel_select, upsample_size=self.upsample_size) 
         clean_images = self.preprocess_func(inpt)
             
         # Generate random noise with same shape as clean images
@@ -189,6 +240,9 @@ class collidingBubbles(Dataset):
         
         # Sample random timesteps
         rand_timesteps = torch.randint(0, self.t_timesteps, (1,))
+        
+        if self.aug:
+            clean_images = self.flip(clean_images)
         
         return clean_images, noisy_images, rand_timesteps
     
@@ -204,7 +258,8 @@ def get_random_timestep(file, seq, max_seq):
 
     return os.path.join(directory, new_name), torch.tensor(random_time-seq, dtype=torch.long)
 
-    
+
+# TODO : CORRECT PREPROCESSING AND CHECK EVERYTHING
 class TimeDependentBubbles(Dataset):
     def __init__(self, data, loading_func, preprocess_func, data_aug=None, channel_select=None, repeat=False):
         self.data = data
@@ -240,3 +295,19 @@ class TimeDependentBubbles(Dataset):
             return inpt_aug, target_aug
         
         return inpt, target, timestep
+    
+    
+# data should only be the inital instances
+class TrajectoyBubbles(Dataset):
+    def __init__(self, data, loading_func, preprocess_func, channel_select):
+        self.data = data
+        self.loading_func = loading_func
+        self.preprocess_func = preprocess_func
+        self.channel_select = channel_select
+        
+    # data should have 720-740 length, there are this many train trajectories
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        pass
