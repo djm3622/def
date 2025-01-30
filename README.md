@@ -1,11 +1,12 @@
 # Diffusion-augmented Ensemble Forecasting
 
 # TODO
-1. (Data + Dataset) to get trajectories.
-2. Seed + space these trajectories (in Tune).
+1. (data.py + dataset.py) to get trajectories.
+2. Seed + space these trajectories (in tune.py).
+3. Test/setup the metrics on some trajectories (in metrics.py).
 3. Setup tuning function to test (solvers + guidance) -> determine where the strength and weakness of this method lies.
-4. Setup SV-based perturbations.
-5. Compare the two.
+4. Setup SV/ETKF-based perturbations (in traditional.py).
+5. Compare the two (in comparisons.py).
 
 # References
 1. https://arxiv.org/pdf/2101.12072
